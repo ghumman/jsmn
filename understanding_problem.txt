@@ -1,0 +1,161 @@
+In json.c
+
+int json_test(char *str)
+
+-> json_parse(str, NULL, json_callback_print)
+
+where json_callback_print declaration is: 
+int json_callback_print(JSON_ENTRY *e);
+
+json_callback_print definition is: 
+int json_callback_print(JSON_ENTRY *e)
+{
+    BUFFER *wb=buffer_create(300);
+
+	buffer_sprintf(wb,"%s = ", e->name);
+    char txt[50];
+	switch(e->type) {
+		case JSON_OBJECT:
+			e->callback_function = json_callback_print;
+			buffer_strcat(wb,"OBJECT");
+			break;
+
+		case JSON_ARRAY:
+			e->callback_function = json_callback_print;
+			sprintf(txt,"ARRAY[%lu]", e->data.items);
+			buffer_strcat(wb, txt);
+			break;
+
+		case JSON_STRING:
+			buffer_strcat(wb, e->data.string);
+			break;
+
+		case JSON_NUMBER:
+            sprintf(txt,"%Lf", e->data.number);
+			buffer_strcat(wb,txt);
+
+			break;
+
+		case JSON_BOOLEAN:
+			buffer_strcat(wb, e->data.boolean?"TRUE":"FALSE");
+			break;
+
+		case JSON_NULL:
+			buffer_strcat(wb,"NULL");
+			break;
+	}
+    info("JSON: %s", buffer_tostring(wb));
+	buffer_free(wb);
+	return 0;
+}
+
+
+-> Insie int json_parse(...)
+if arg1 = char *js = str == empty return JSON_CANNOT_DOWNLOAD
+else if js exists, get tokens like following. 
+jsmntok_t *tokens = json_tokenise(js, strlen(js), &count);
+
+if tokens exist ->
+	i) call json_walk_tree;
+	ii) free tokens
+	iii) return JSON_OK
+else if tokens don't exist -> 
+	return JSON_CANNOT_PARSE
+
+/////////////////////////////////////////////////////////////
+// json_tokenise
+/////////////////////////////////////////////////////////////
+Declaration: 
+jsmntok_t *json_tokenise (char *js, size_t len, size_t *count);
+/*
+jsmntok_t is a structure with following fields
+        jsmntype_t type;
+        int start;
+        int end;
+        int size;
+Also where jsmntype_t is enum with following fields
+	JSMN_PRIMITIVE = 0,
+        JSMN_OBJECT = 1,
+        JSMN_ARRAY = 2,
+        JSMN_STRING = 3
+*/
+Definition: 
+jsmntok_t *json_tokenise(char *js, size_t len, size_t *count)
+{
+	// json_tokens = JSON_TOKENS
+	// #define JSON_TOKENS 1024
+	int n = json_tokens;
+	if(!js || !len) {
+		error("JSON: json string is empty.");
+		return NULL;
+	}
+	jsmn_parser parser;
+	jsmn_init(&parser);
+	jsmntok_t *tokens = mallocz(sizeof(jsmntok_t) * n);
+	if(!tokens) return NULL;
+	int ret = jsmn_parse(&parser, js, len, tokens, n);
+	while (ret == JSMN_ERROR_NOMEM) {
+		n *= 2;
+		jsmntok_t *new = reallocz(tokens, sizeof(jsmntok_t) * n);
+		if(!new) {
+			freez(tokens);
+			return NULL;
+		}
+		tokens = new;
+		ret = jsmn_parse(&parser, js, len, tokens, n);
+	}
+
+	if (ret == JSMN_ERROR_INVAL) {
+		error("JSON: Invalid json string.");
+		freez(tokens);
+		return NULL;
+	}
+	else if (ret == JSMN_ERROR_PART) {
+		error("JSON: Truncated JSON string.");
+		freez(tokens);
+		return NULL;
+	}
+	if(count) *count = (size_t)ret;
+	if(json_tokens < n) json_tokens = n;
+	return tokens;
+}
+
+
+///////////////////////////////////////////////////////////
+// json_walk_tree
+///////////////////////////////////////////////////////////
+History: 
+function json_test called json_parse. 
+function json_parse called json_tokenise and received tokens (type jsmntok_t)
+if tokens exist call json_walk_tree. 
+
+Declaration: 
+size_t json_walk_tree(char *js, jsmntok_t *t, void *callback_data, int (*callback_function)(struct json_entry *));
+Definition: 
+size_t json_walk_tree(char *js, jsmntok_t *t, void *callback_data, int (*callback_function)(struct json_entry *))
+{
+	JSON_ENTRY e = {
+		.name = "",
+		.fullname = "",
+		.callback_data = callback_data,
+		.callback_function = callback_function
+	};
+	switch (t[0].type) {
+		// when type is object call json_walk_object
+		case JSMN_OBJECT:
+			e.type = JSON_OBJECT;
+			json_walk_object(js, t, 0, 0, &e);
+			break;
+		// when type is array call json_walk_array
+		case JSMN_ARRAY:
+			e.type = JSON_ARRAY;
+			json_walk_array(js, t, 0, 0, &e);
+			break;
+		case JSMN_PRIMITIVE:
+		case JSMN_STRING:
+			break;
+	}
+	return 1;
+}
+
+

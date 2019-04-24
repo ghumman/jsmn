@@ -1,3 +1,5 @@
+# If you're trying to use it for a project, use original jsmn library.
+
 JSMN
 ====
 
